@@ -4,19 +4,29 @@ This repository contains a full-stack application built to evaluate the accuracy
 
 ## Live Links
 
-* **Frontend Application (Vercel):** [Insert your Vercel URL here]
-* **Backend API (Render):** [Insert your Render URL here]
+* **Frontend Application (Vercel):** https://fse-challenge-8392.vercel.app/
+* **Backend API (Render):** https://fse-challenge-8392.onrender.com
 * **Video Demo (YouTube):** [Insert your Unlisted YouTube URL here]
 
 ## Architecture & Key Domain Logic
 
-The client purchases electricity on the day-ahead market, meaning decisions for delivery on Day X must be finalized on Day X-1.
+The client needs to estimate wind generation available for the delivery day before making day-ahead electricity procurement decisions. This application evaluates national-level UK wind generation forecasts against actual generation using Elexon data for January 2026.
 
-To accurately reflect the information available to a trader at the time of decision:
+1. **Decision-date alignment:** The backend uses Pandas to derive the decision date as the calendar day before the delivery date.
+2. **Forecast selection:** Forecast records from Elexon's `WINDFOR` dataset are filtered using their `publishTime`. For each delivery interval, the latest eligible forecast published on or before the configured decision cutoff is selected. The cutoff is an explicit modelling assumption and should be aligned with the relevant market's trading rules.
+3. **Actual generation:** The selected forecasts are matched with actual wind generation from the `FUELHH` dataset using the corresponding 30-minute `startTime`.
+4. **Missing-data handling:** An inner join excludes intervals without matching forecast and actual records. Rows with missing generation values are also excluded from metric calculations rather than treating missing observations as zero generation.
+5. **Forecast accuracy:** The backend calculates Mean Absolute Error (MAE) and Root Mean Square Error (RMSE) from the valid matched observations. Absolute error is also available for interval-level analysis.
 
-1. **Decision Date Alignment:** The backend utilizes Pandas to calculate a `decision_date` (Delivery Date minus 1 day).
-2. **Forecast Filtering:** The system filters Elexon's `WINDFOR` dataset to strictly isolate forecasts published *on or before* the decision date. It then selects the latest valid forecast prior to the trading cutoff.
-3. **Metrics Calculation:** The valid day-ahead forecasts are merged with the actual outturn generation (`FUELHH`) on 30-minute `startTime` intervals to calculate the Mean Absolute Error (MAE) and Root Mean Square Error (RMSE).
+These metrics quantify historical forecast error; they do not independently determine the optimal electricity procurement quantity.
+
+### Key Technical Decisions
+
+- **Time-series alignment:** Forecasts and actuals are matched by delivery interval to avoid comparing values from different half-hour periods.
+- **Forecast availability:** Forecast publication timestamps are considered when selecting forecasts for the day-ahead evaluation. The selected cutoff is a modelling assumption and may need adjustment for a specific market or auction.
+- **Metric integrity:** Missing or unmatched observations are excluded from MAE and RMSE calculations. Zero-filling would incorrectly treat missing data as genuine zero-MW generation.
+- **Separation of concerns:** FastAPI handles data retrieval and analysis, while React presents the resulting metrics and visualizations.
+- **Deployment:** Docker packages the backend, Render hosts the backend API, and Vercel hosts the frontend.
 
 ## Tech Stack
 
