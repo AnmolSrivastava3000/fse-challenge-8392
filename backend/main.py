@@ -61,21 +61,27 @@ async def get_wind_analysis():
     df_forecast['publishTime'] = pd.to_datetime(df_forecast['publishTime'])
     df_forecast = df_forecast.rename(columns={'generation': 'forecast_generation'})
 
-    # 3. Day-Ahead Filtering
-    df_forecast['delivery_date'] = df_forecast['startTime'].dt.date
-    df_forecast['decision_date'] = df_forecast['delivery_date'] - pd.Timedelta(days=1)
+# 3. Day-Ahead Filtering with Precise Cutoff
+    # UK Day-Ahead market typically closes at 12:00 PM (Noon) the day prior to delivery.
+    df_forecast['delivery_date'] = df_forecast['startTime'].dt.floor('D')
+    df_forecast['trading_cutoff'] = df_forecast['delivery_date'] - pd.Timedelta(days=1) + pd.Timedelta(hours=12)
     
-    df_forecast['publish_date'] = df_forecast['publishTime'].dt.date
-    day_ahead_forecasts = df_forecast[df_forecast['publish_date'] <= df_forecast['decision_date']]
+    # Strictly filter: forecast must be published ON or BEFORE the 12:00 PM trading cutoff
+    valid_forecasts = df_forecast[df_forecast['publishTime'] <= df_forecast['trading_cutoff']]
     
-    day_ahead_forecasts = day_ahead_forecasts.sort_values('publishTime', ascending=False)
+    # Select the absolutely most recent forecast available just before the cutoff
+    day_ahead_forecasts = valid_forecasts.sort_values('publishTime', ascending=False)
     day_ahead_forecasts = day_ahead_forecasts.drop_duplicates(subset=['startTime'])
 
-    # 4. Merge and Calculate
-    merged = pd.merge(df_actual, day_ahead_forecasts[['startTime', 'forecast_generation', 'publishTime']], on='startTime')
+    # 4. Merge and Calculate Metrics Safely
+    # Default 'inner' merge drops intervals missing either an actual or a forecast
+    merged = pd.merge(df_actual, day_ahead_forecasts[['startTime', 'forecast_generation', 'publishTime']], on='startTime', how='inner')
+    
+    # Drop any literal NaNs in the generation columns to prevent metric distortion
+    merged = merged.dropna(subset=['actual_generation', 'forecast_generation'])
     
     if merged.empty:
-        raise HTTPException(status_code=404, detail="Data fetched successfully, but no matching day-ahead records found.")
+        raise HTTPException(status_code=404, detail="No matching day-ahead records found after filtering.")
         
     merged = merged.sort_values('startTime')
     merged['error_mw'] = merged['actual_generation'] - merged['forecast_generation']
@@ -84,9 +90,9 @@ async def get_wind_analysis():
     merged['startTime'] = merged['startTime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
     merged['publishTime'] = merged['publishTime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
     
+    # Metrics are now mathematically pure, calculated only on complete pairs
     mae = float(merged['absolute_error_mw'].mean())
     rmse = float((merged['error_mw'] ** 2).mean() ** 0.5)
-    
     return {
         "metrics": {
             "mean_absolute_error_mw": round(mae, 2),
